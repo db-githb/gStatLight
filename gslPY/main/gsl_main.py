@@ -113,10 +113,6 @@ class gStatLight(BaseGSL):
         # Phase 3 — write PLY
         with step(CONSOLE, f"Phase {count} — Write PLY", emoji=":floppy_disk:"):
             filename = write_ply(self.model_path, pipeline.model)
-            path = Path(filename)
-            dir = config.datamanager.data.parents[1] / path.parent
-            linked = f"[link=file://{dir}/]{path.name}[/link]"
-            TABLE.add_row("Final 3DGS model", linked)
-            CONSOLE.log(Panel(TABLE, title="[bold green]🎉 Cull Complete![/bold green] 🎉", expand=False))
+            CONSOLE.print(f"• Wrote .ply to: {filename}")
             count+=1
 

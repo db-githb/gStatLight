@@ -217,16 +217,25 @@ def statcull_radius_std(pipeline, radius_multiplier=0.2):
     cull_mask = distances > (radius_multiplier * distance_std)
     return cull_mask
 
-def statcull_mahalanobis(pipeline, threshold=0.2):
+def statcull_anisotropic(pipeline, radii=(0.2, 0.2, 0.6), use_median=True, eps=1e-8):
+    """
+    Cull Gaussians outside an ellipsoid defined by per-axis radii (in z-score units).
+    radii: (rx, ry, rz) — e.g., 0.3 for x/y and 0.6 for z to be more lenient on z.
+    """
     means3D = pipeline.model.means.to("cpu")
-    center = means3D.median(dim=0).values
-    std_dev = means3D.std(dim=0)
-    
-    # Normalize by standard deviation per axis, then compute radius
-    normalized_diff = (means3D - center) / std_dev
-    mahalanobis_distance = torch.norm(normalized_diff, dim=1)
-    
-    cull_mask = mahalanobis_distance > threshold
+    center = (means3D.median(dim=0).values if use_median else means3D.mean(dim=0))
+    std_dev = means3D.std(dim=0).clamp_min(eps)
+
+    # Per-axis z-scores
+    zscore = (means3D - center) / std_dev  # shape (N, 3)
+
+    # Scale by allowed radii -> ellipsoidal distance
+    r = torch.tensor(radii, dtype=zscore.dtype)
+    scaled = zscore / r                     # (x/rx, y/ry, z/rz)
+    ellipsoidal_dist = torch.linalg.norm(scaled, dim=1)
+
+    # Outside the ellipsoid if distance > 1
+    cull_mask = ellipsoidal_dist > 1.0
     return cull_mask
 
 def build_loader(config, split, device):

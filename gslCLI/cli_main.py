@@ -17,8 +17,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "statlight":
-        dc = gStatLight(Path(args.load_config)
-                        )
+        dc = gStatLight(Path(args.load_config))
         dc.run_statlight()
 
 with torch.inference_mode():

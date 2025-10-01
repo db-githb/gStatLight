@@ -31,7 +31,7 @@ from gslPY.main.utils_main import (
 from gslPY.main.utils_cull import (
     statcull,
     statcull_radius_std,
-    statcull_mahalanobis,
+    statcull_anisotropic,
     modify_model,
 )
 
@@ -91,7 +91,7 @@ class gStatLight(BaseGSL):
         # Phase 1 — statistical cull
         starting_total = pipeline.model.means.shape[0]
         with step(CONSOLE, f"Phase {count} — Statistical cull", emoji=":broom:"):
-            cull_mask = statcull_mahalanobis(pipeline, threshold=0.3)
+            cull_mask = statcull_anisotropic(pipeline)
             keep = ~cull_mask
             pipeline.model = modify_model(pipeline.model, keep)
             statcull_total = pipeline.model.means.shape[0]

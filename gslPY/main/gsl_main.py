@@ -23,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import shutil
 from gslPY.main.utils_main import (
     write_ply,
     load_config, 
@@ -95,31 +96,33 @@ class gStatLight(BaseStatLight):
         )
         config.datamanager.dataparser.train_split_fraction = 1.0 # put all images in train split
         config.datamanager.dataparser.downscale_factor = 1
+        count = 1
+
         # Phase 1 — statistical cull
         starting_total = pipeline.model.means.shape[0]
-        with step(CONSOLE, "Phase 1 — Statistical cull", emoji=":broom:"):
+        with step(CONSOLE, f"Phase {count} — Statistical cull", emoji=":broom:"):
             cull_mask = statcull_anisotropic(pipeline)
             keep = ~cull_mask
             pipeline.model = modify_model(pipeline.model, keep)
             statcull_total = pipeline.model.means.shape[0]
             log_totals(CONSOLE, starting_total, statcull_total)
-    
-        #keep = ~remove_overhead_cloud(pipeline)
-        #pipeline.model = modify_model(pipeline.model, keep)
+            count += 1
+
     
         # Phase 2 — render frames
-        with step(CONSOLE, "Phase 2 — Rendering frames for mask extraction", emoji=":film_frames:"):
-            render_dir = "renders/IMG_4718/"
-            #render_dir = render_loop(self.model_path, config, pipeline)
+        with step(CONSOLE, f"Phase {count} — Rendering frames for mask extraction", emoji=":film_frames:"):
+            render_dir = render_loop(self.model_path, config, pipeline)
             CONSOLE.log(":tada: Render complete")
+            count += 1
 
-        # Phase 3a — car mask (keep car)
-        with step(CONSOLE, "Phase 3a — Apply car mask (keep car)", emoji=":car:"):
-            pipeline.model = run_mask_processing("car", 0.9, 0.25, False, render_dir, config, pipeline)
-            #pipeline.model = modify_model(pipeline.model, keep_car)
+        # Phase 3 — car mask (keep car)
+        with step(CONSOLE, f"Phase {count} — Apply car mask (keep car)", emoji=":car:"):
+            pipeline.model, mask_dir = run_mask_processing("car", 0.9, 0.25, False, render_dir, config, pipeline)
+            CONSOLE.log(f":tada: Masks complete")
+            count += 1
 
-        # Phase 3b — ground plane via RANSAC
-        with step(CONSOLE, "Phase 3b — Find ground plane (RANSAC)", emoji=":triangular_ruler:"):
+        # Phase 4 — ground plane via RANSAC
+        with step(CONSOLE, f"Phase {count} — Find ground plane (RANSAC)", emoji=":triangular_ruler:"):
             keep_ground, _ , norm, offset = find_ground_plane(pipeline.model)
             #ground_gaussians = get_ground_gaussians(pipeline.model, is_ground)
             before = pipeline.model.means.shape[0]
@@ -128,28 +131,13 @@ class gStatLight(BaseStatLight):
             nvals = norm.detach().cpu().tolist()
             CONSOLE.log(f"• Plane normal: {tuple(round(float(x), 3) for x in nvals)}  offset: {float(offset):.3f}")
             log_totals(CONSOLE, before, after)
-
-        # Phase 3c — ground mask (remove ground pixels)
-        #with step(CONSOLE, "Phase 3c — Apply ground mask (remove ground)", emoji=":herb:"):
-        #    # NOTE: set invert=True if your run_mask_processing keeps matches by default.
-        #    keep_ground = run_mask_processing("ground", 0.5, 0.25, False, render_dir, config, pipeline)
-        #    keep_mask = keep_car | keep_ground
-        #    pipeline.model = modify_model(pipeline.model, keep_mask)
-
-
-        # Phase 4 — synthesize/restore ground
-        #with step(CONSOLE, "Phase 4 — Synthesize ground plane geometry", emoji=":seedling:"):
-        #    before = pipeline.model.means.shape[0]
-        #    pipeline.model = ground_driver(norm, ground_gaussians, pipeline)
-        #    after = pipeline.model.means.shape[0]
-        #    added = after - before
-        #    CONSOLE.log(f"• Added {added} ground splats")
+            count += 1
 
         # Phase 5 — write PLY
-        with step(CONSOLE, "Phase 5 — Write PLY", emoji=":floppy_disk:"):
-            filename = write_ply(self.model_path, pipeline.model)
-            path = Path(filename)
-            dir = config.datamanager.data.parents[1] / path.parent
-            linked = f"[link=file://{dir}/]{path.name}[/link]"
-            TABLE.add_row("Final 3DGS model", linked)
-            CONSOLE.log(Panel(TABLE, title="[bold green]🎉 Cull Complete![/bold green] 🎉", expand=False))
+        with step(CONSOLE, f"Phase {count} — clean up render directory and mask directory", emoji=":wastebasket:"):
+            if render_dir.exists():
+                shutil.rmtree(render_dir)
+            if mask_dir.exists():
+                shutil.rmtree(mask_dir)
+
+        

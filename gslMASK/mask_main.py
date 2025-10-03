@@ -70,6 +70,4 @@ class MaskProcessor:
     predictor, processor, dino = setup_mask(self.data_dir)
     save_dir = self.mask_loop(df, image_paths, predictor, processor, dino, bt, tt)
     mask_dir = Path(save_dir).resolve()
-    linked_name = f"[link=file://{mask_dir}]{mask_dir}[/link]"
-    CONSOLE.log(f"🎉 Finished! 🎉")
-    CONSOLE.print(f"Inspect masks:", linked_name)
+    return mask_dir

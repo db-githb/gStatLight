@@ -71,7 +71,7 @@ This two-stage approach ensures robust vehicle isolation while preserving geomet
 <p align="center">
   <img src="README_images/stage2.png" alt="After Stage 2" width="35%" />
    <br>
- <em>After Stage 12/em>
+ <em>After Stage 12</em>
 </p>
 
 ## 📂 File Structure (Input Layout)

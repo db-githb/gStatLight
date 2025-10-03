@@ -270,7 +270,7 @@ def statcull_anisotropic(pipeline, radii=(0.2, 0.2, 0.6), use_median=True, eps=1
     cull_mask = ellipsoidal_dist > 1.0
     return cull_mask
 
-def cull_loop(config, pipeline, debug=False):
+def cull_loop(config, pipeline, debug=True):
 
     render_dir = config.datamanager.data / "renders"
     render_dir.mkdir(parents=True, exist_ok=True)

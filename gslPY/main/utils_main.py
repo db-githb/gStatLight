@@ -2,14 +2,13 @@ import torch
 import numpy as np
 import re, yaml
 import os
-import shutil
 from PIL import Image
 from typing_extensions import Literal, Tuple
 from collections import OrderedDict
 from pathlib import Path
 from plyfile import PlyData
 
-from gslPY.main.utils_rich import CONSOLE, get_progress
+from gslUTILS.rich_utils import CONSOLE, get_progress
 from gslPY.pipelines.base_pipeline import Pipeline
 from gslPY.pipelines.base_pipeline import VanillaPipelineConfig
 from gslPY.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
@@ -17,6 +16,7 @@ from gslPY.models.splatfacto import SplatfactoModelConfig
 from gslPY.data.dataparsers.colmap_dataparser import ColmapDataParserConfig
 from gslPY.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
 from gslPY.data.datasets.base_dataset import InputDataset
+from gslMASK.mask_main import MaskProcessor
 from gslPY.main.utils_cull import ( 
     build_loader,
     modify_model,
@@ -232,7 +232,7 @@ def write_ply(model_path, model):
     
     model_name = model_path.parent.name
     experiment_name = model_path.parts[1]  # e.g., 'my-experiment'
-    filename = model_path.parent / f"{experiment_name}_{model_name}_statlight.ply"
+    filename = model_path.parent / f"{experiment_name}_{model_name}_culled.ply"
     count, map_to_tensors = setup_write_ply(model)
 
     # Ensure count matches the length of all tensors
@@ -280,47 +280,32 @@ def render_loop(model_path, config, pipeline):
         output_dir.mkdir(parents=True, exist_ok=True)
         idx = 1
         
-        #for split in "train+test".split("+"):
-        split = "train"
-        dataset, dataloader = build_loader(config, split, pipeline.device,)
-        desc = f":movie_camera: Rendering split {split} :movie_camera:"
-        
-        with get_progress(desc) as progress:
-            for camera, _ in progress.track(dataloader, total=len(dataset)):
-                with torch.no_grad():
-                    rgb_tensor = pipeline.model.get_outputs(camera)["rgb"]
-                # convert [C,H,W] float tensor in [0,1] to a H×W×3 uint8 image
-                img_np = (
-                    rgb_tensor
-                    .clamp(0.0, 1.0)
-                    .mul(255)
-                    .byte()
-                    .cpu()
-                    .numpy()
-                )
-                Image.fromarray(img_np).save(output_dir / f"frame_{idx:05d}.png")
-                idx+=1
+        for split in "train+test".split("+"):
+            dataset, dataloader = build_loader(config, split, pipeline.device,)
+            desc = f":movie_camera: Rendering split {split} :movie_camera:"
+            
+            with get_progress(desc) as progress:
+                for camera, _ in progress.track(dataloader, total=len(dataset)):
+                    with torch.no_grad():
+                        rgb_tensor = pipeline.model.get_outputs(camera)["rgb"]
+
+                    # convert [C,H,W] float tensor in [0,1] to a H×W×3 uint8 image
+                    img_np = (
+                        rgb_tensor
+                        .clamp(0.0, 1.0)
+                        .mul(255)
+                        .byte()
+                        .cpu()
+                        .numpy()
+                    )
+                    Image.fromarray(img_np).save(output_dir / f"frame_{idx:05d}.png")
+                    idx+=1
         return output_dir
 
 def run_mask_processing(label, t1, t2, invert, render_dir, config, pipeline):
     mp = MaskProcessor(Path(render_dir), label)
-    mask_dir = mp.run_mask_processing(t1, t2)
+    mp.run_mask_processing(t1, t2)
     mask = cull_loop(config, pipeline)          # True where it matches the mask
     sel  = ~mask if invert else mask            # invert==True ⇒ remove matches
     pipeline.model = modify_model(pipeline.model, sel)
-
-    return pipeline.model, mask_dir
-
-def prompt_delete_dir(dir_path):
-    while True:
-        response = input(f"Delete temporary directory '{dir_path}'? (y/n): ").lower().strip()
-        if response in ['y', 'yes']:
-            if os.path.exists(dir_path):
-                shutil.rmtree(dir_path)
-                print(f"✓ Deleted {dir_path}")
-            break
-        elif response in ['n', 'no']:
-            print(f"✓ Keeping {dir_path}")
-            break
-        else:
-            print("Please enter 'y' or 'n'")
+    return pipeline.model

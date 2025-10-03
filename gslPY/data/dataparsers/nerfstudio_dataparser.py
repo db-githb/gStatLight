@@ -32,7 +32,7 @@ from gslPY.data.utils.dataparsers_utils import (
     get_train_eval_split_fraction,
     get_train_eval_split_interval,
 )
-from gslPY.main.utils_rich import CONSOLE
+from gslUTILS.rich_utils import CONSOLE
 
 from gslPY.utils.scene_box import SceneBox
 from gslPY.utils.io import load_from_json
@@ -68,7 +68,7 @@ class NerfstudioDataParserConfig(DataParserConfig):
     Interval uses every nth frame for eval.
     All uses all the images for any split.
     """
-    train_split_fraction: float = 0.9
+    train_split_fraction: float = 1.0
     """The percentage of the dataset to use for training. Only used when eval_mode is train-split-fraction."""
     eval_interval: int = 8
     """The interval between frames to use for eval. Only used when eval_mode is eval-interval."""

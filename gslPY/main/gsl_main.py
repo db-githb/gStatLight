@@ -19,29 +19,31 @@ render.py
 from __future__ import annotations
 import os
 import sys
-from typing import Optional
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 from gslPY.main.utils_main import (
     write_ply,
-    load_config,
-)
+    load_config, 
+    render_loop,
+    run_mask_processing)
 
 from gslPY.main.utils_cull import (
-    statcull,
-    statcull_radius_std,
     statcull_anisotropic,
     modify_model,
+    remove_overhead_cloud
 )
 
 from gslPY.main.utils_ground import (
     find_ground_plane,
-    rotate_ground_gaussians
+    get_ground_gaussians,
+    ground_driver
 )
 
-from gslPY.main.utils_rich import CONSOLE, TABLE
+from gslUTILS.rich_utils import CONSOLE, TABLE
 from rich.panel import Panel
+from threading import Thread
 
 import time
 from contextlib import contextmanager
@@ -68,18 +70,24 @@ def log_totals(console, before, after, noun="splats"):
 
 
 @dataclass
-class BaseGSL:
+class BaseStatLight:
     """Base class for rendering."""
     model_path: Path
     """Path to model file."""
+    output_dir: Path = Path("culled_models/output.ply")
+    """Path to output model file."""
+
 
 @dataclass
-class gStatLight(BaseGSL):
-    """Main driver class"""
+class gStatLight(BaseStatLight):
+    """Cull using all images in the dataset."""
 
+    mask_dir: Optional[Path] = None
+    #"""Override path to the dataset."""
+    
     # main/driver function
     def run_statlight(self):
-        count = 1
+
         # load model
         config, pipeline = load_config(
             self.model_path,
@@ -87,32 +95,61 @@ class gStatLight(BaseGSL):
         )
         config.datamanager.dataparser.train_split_fraction = 1.0 # put all images in train split
         config.datamanager.dataparser.downscale_factor = 1
-        
         # Phase 1 — statistical cull
         starting_total = pipeline.model.means.shape[0]
-        with step(CONSOLE, f"Phase {count} — Statistical cull", emoji=":broom:"):
+        with step(CONSOLE, "Phase 1 — Statistical cull", emoji=":broom:"):
             cull_mask = statcull_anisotropic(pipeline)
             keep = ~cull_mask
             pipeline.model = modify_model(pipeline.model, keep)
             statcull_total = pipeline.model.means.shape[0]
             log_totals(CONSOLE, starting_total, statcull_total)
-            count+=1
-            
-        # Phase 2 — ground plane via RANSAC
-        with step(CONSOLE, f"Phase {count} — Find ground plane (RANSAC)", emoji=":triangular_ruler:"):
-            keep, is_ground, norm, offset = find_ground_plane(pipeline.model)
+    
+        #keep = ~remove_overhead_cloud(pipeline)
+        #pipeline.model = modify_model(pipeline.model, keep)
+    
+        # Phase 2 — render frames
+        with step(CONSOLE, "Phase 2 — Rendering frames for mask extraction", emoji=":film_frames:"):
+            render_dir = "renders/IMG_4718/"
+            #render_dir = render_loop(self.model_path, config, pipeline)
+            CONSOLE.log(":tada: Render complete")
+
+        # Phase 3a — car mask (keep car)
+        with step(CONSOLE, "Phase 3a — Apply car mask (keep car)", emoji=":car:"):
+            pipeline.model = run_mask_processing("car", 0.9, 0.25, False, render_dir, config, pipeline)
+            #pipeline.model = modify_model(pipeline.model, keep_car)
+
+        # Phase 3b — ground plane via RANSAC
+        with step(CONSOLE, "Phase 3b — Find ground plane (RANSAC)", emoji=":triangular_ruler:"):
+            keep_ground, _ , norm, offset = find_ground_plane(pipeline.model)
+            #ground_gaussians = get_ground_gaussians(pipeline.model, is_ground)
             before = pipeline.model.means.shape[0]
-            #pipeline.model = rotate_ground_gaussians(is_ground, norm, pipeline.model)
-            pipeline.model = modify_model(pipeline.model, keep)
+            pipeline.model = modify_model(pipeline.model, keep_ground)
             after = pipeline.model.means.shape[0]
             nvals = norm.detach().cpu().tolist()
             CONSOLE.log(f"• Plane normal: {tuple(round(float(x), 3) for x in nvals)}  offset: {float(offset):.3f}")
             log_totals(CONSOLE, before, after)
-            count+=1
 
-        # Phase 3 — write PLY
-        with step(CONSOLE, f"Phase {count} — Write PLY", emoji=":floppy_disk:"):
+        # Phase 3c — ground mask (remove ground pixels)
+        #with step(CONSOLE, "Phase 3c — Apply ground mask (remove ground)", emoji=":herb:"):
+        #    # NOTE: set invert=True if your run_mask_processing keeps matches by default.
+        #    keep_ground = run_mask_processing("ground", 0.5, 0.25, False, render_dir, config, pipeline)
+        #    keep_mask = keep_car | keep_ground
+        #    pipeline.model = modify_model(pipeline.model, keep_mask)
+
+
+        # Phase 4 — synthesize/restore ground
+        #with step(CONSOLE, "Phase 4 — Synthesize ground plane geometry", emoji=":seedling:"):
+        #    before = pipeline.model.means.shape[0]
+        #    pipeline.model = ground_driver(norm, ground_gaussians, pipeline)
+        #    after = pipeline.model.means.shape[0]
+        #    added = after - before
+        #    CONSOLE.log(f"• Added {added} ground splats")
+
+        # Phase 5 — write PLY
+        with step(CONSOLE, "Phase 5 — Write PLY", emoji=":floppy_disk:"):
             filename = write_ply(self.model_path, pipeline.model)
-            CONSOLE.print(f"• Wrote .ply to: {filename}")
-            count+=1
-
+            path = Path(filename)
+            dir = config.datamanager.data.parents[1] / path.parent
+            linked = f"[link=file://{dir}/]{path.name}[/link]"
+            TABLE.add_row("Final 3DGS model", linked)
+            CONSOLE.log(Panel(TABLE, title="[bold green]🎉 Cull Complete![/bold green] 🎉", expand=False))

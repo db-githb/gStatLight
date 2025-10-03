@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from pathlib import Path
-from gslPY.main.utils_rich import get_progress
+from gslUTILS.rich_utils import get_progress
 from gslPY.data.utils.dataloaders import FixedIndicesEvalDataloader
 from contextlib import contextmanager
 
@@ -217,6 +217,38 @@ def statcull_radius_std(pipeline, radius_multiplier=0.2):
     cull_mask = distances > (radius_multiplier * distance_std)
     return cull_mask
 
+def statcull_mahalanobis(pipeline, threshold=0.2):
+    means3D = pipeline.model.means.to("cpu")
+    center = means3D.median(dim=0).values
+    std_dev = means3D.std(dim=0)
+    
+    # Normalize by standard deviation per axis, then compute radius
+    normalized_diff = (means3D - center) / std_dev
+    mahalanobis_distance = torch.norm(normalized_diff, dim=1)
+    
+    cull_mask = mahalanobis_distance > threshold
+    return cull_mask
+
+
+def build_loader(config, split, device):
+    test_mode = "train" if split == "train" else "test"
+
+    with _disable_datamanager_setup(config.datamanager._target):  # pylint: disable=protected-access
+        datamanager = config.datamanager.setup(
+            test_mode=test_mode,
+            device=device
+        )
+        
+    dataset = getattr(datamanager, f"{split}_dataset", datamanager.eval_dataset)
+    
+    dataloader = FixedIndicesEvalDataloader(
+        input_dataset=dataset,
+        device=datamanager.device,
+        num_workers=datamanager.world_size * 4,
+    )
+    
+    return dataset, dataloader
+
 def statcull_anisotropic(pipeline, radii=(0.2, 0.2, 0.6), use_median=True, eps=1e-8):
     """
     Cull Gaussians outside an ellipsoid defined by per-axis radii (in z-score units).
@@ -238,52 +270,82 @@ def statcull_anisotropic(pipeline, radii=(0.2, 0.2, 0.6), use_median=True, eps=1
     cull_mask = ellipsoidal_dist > 1.0
     return cull_mask
 
-def build_loader(config, split, device):
-    test_mode = "train" if split == "train" else "test"
-
-    with _disable_datamanager_setup(config.datamanager._target):  # pylint: disable=protected-access
-        datamanager = config.datamanager.setup(
-            test_mode=test_mode,
-            device=device
-        )
-        
-    dataset = getattr(datamanager, f"{split}_dataset", datamanager.eval_dataset)
-    
-    dataloader = FixedIndicesEvalDataloader(
-        input_dataset=dataset,
-        device=datamanager.device,
-        num_workers=datamanager.world_size * 4,
-    )
-    
-    return dataset, dataloader
-
 def cull_loop(config, pipeline, debug=False):
 
     render_dir = config.datamanager.data / "renders"
     render_dir.mkdir(parents=True, exist_ok=True)
     mask_dir = config.datamanager.data / "masks" #get_mask_dir(config)
-    keep_lst_master = torch.zeros(pipeline.model.means.shape[0], dtype=torch.bool)
-    config.datamanager.dataparser.downscale_factor = 1
-    #for split in "train+test".split("+"):
-    split = "train"
-        
-    dataset, dataloader = build_loader(config, split, pipeline.device)
-    desc = f"\u2702\ufe0f\u00A0 Culling split {split} \u2702\ufe0f\u00A0"
-    with get_progress(desc) as progress:
-        for idx, (camera, batch) in enumerate(progress.track(dataloader, total=len(dataset))):
-            with torch.no_grad():
-                #frame_idx = batch["image_idx"]
-                camera.camera_to_worlds = camera.camera_to_worlds.squeeze() # splatoff rasterizer requires cam2world.shape = [3,4]
-                bool_mask = get_mask(batch, mask_dir)
-                if bool_mask is None:
-                    continue
-                u_i, v_i, keep_lst, _ = get_cull_list(pipeline.model, camera, bool_mask)
-                keep_lst_master |= keep_lst.to("cpu")
-                if debug:
-                    visualize_mask_and_points(u_i[keep_lst], v_i[keep_lst], bool_mask)
-                    print(f"{idx}: {keep_lst.sum().item()}/{keep_lst_master.sum().item()}")
+    keep_lst_master = torch.zeros(pipeline.model.means.shape[0], dtype=torch.bool).to("cuda")
+
+    for split in "train+test".split("+"):
+        dataset, dataloader = build_loader(config, split, pipeline.device)
+        desc = f"\u2702\ufe0f\u00A0 Culling split {split} \u2702\ufe0f\u00A0"
+
+        with get_progress(desc) as progress:
+            for idx, (camera, batch) in enumerate(progress.track(dataloader, total=len(dataset))):
+                with torch.no_grad():
+                    #frame_idx = batch["image_idx"]
+                    camera.camera_to_worlds = camera.camera_to_worlds.squeeze() # splatoff rasterizer requires cam2world.shape = [3,4]
+                    bool_mask = get_mask(batch, mask_dir)
+                    if bool_mask is None:
+                        continue
+                    u_i, v_i, keep_lst, _ = get_cull_list(pipeline.model, camera, bool_mask)
+                    keep_lst_master |= keep_lst.to("cuda")
+                    if debug and idx%10==0:
+                        visualize_mask_and_points(u_i[keep_lst], v_i[keep_lst], bool_mask)
+                        print(f"{idx}: {keep_lst.sum().item()}/{keep_lst_master.sum().item()}")
 
     return keep_lst_master
+
+@torch.no_grad()
+def remove_overhead_cloud(pipeline, up_axis=2,
+                          tail_pct_hi=30.0,        # gentleness (higher = safer)
+                          car_margin_sig=0.6,      # buffer above car roof (σ)
+                          min_sep_sigma_hi_mid=0.6,# demand cloud is clearly above car
+                          frac_hi_max=0.65,        # high band must be ≤ 65% of points
+                          target_cull_frac=0.02):  # remove at most ~2% total (hi-only)
+    # 1) heights → robust σ-units
+    z = pipeline.model.means.detach().cpu()[:, up_axis]
+    zc = z - z.median()
+    sigma = (1.4826 * zc.abs().median()).clamp_min(1e-8)
+    z_sig = zc / sigma
+    # 2) k=3 in 1-D (init at ~10/50/90 percentiles)
+    zs = z_sig.unsqueeze(1)
+    q10, q50, q90 = torch.quantile(z_sig, torch.tensor([0.10, 0.50, 0.99], dtype=z_sig.dtype))
+    C = torch.stack([q10, q50, q90]).unsqueeze(1)
+    for _ in range(60):
+        d = torch.cdist(zs, C)
+        labels = d.argmin(1)
+        Cn = torch.stack([zs[labels==i].mean(0) if (labels==i).any() else C[i] for i in range(3)], 0)
+        if torch.allclose(Cn, C, atol=1e-6): break
+        C = Cn
+    centers = C.squeeze(1)
+    # 3) identify low/mid/high clusters
+    order = torch.argsort(centers)
+    lo_i, mid_i, hi_i = int(order[0]), int(order[1]), int(order[2])
+    mid_mask = (labels == mid_i)
+    hi_mask  = (labels == hi_i)
+    # gates: high band size and separation from mid
+    frac_hi = float(hi_mask.float().mean())
+    sep_hi_mid = float(centers[hi_i] - centers[mid_i])  # in σ
+    if not (sep_hi_mid >= min_sep_sigma_hi_mid and frac_hi <= frac_hi_max and hi_mask.any()):
+        return torch.zeros_like(hi_mask)  # nothing removed
+    # 4) choose the cut INSIDE the HIGH cluster and protect the roof
+    p = max(0.0, min(50.0, tail_pct_hi)) / 100.0
+    z_cut = float(torch.quantile(z_sig[hi_mask], p))          # tail of HIGH
+    car_top = float(torch.quantile(z_sig[mid_mask], 0.99))    # ~roof line
+    z_cut = max(z_cut, car_top + car_margin_sig)              # roof protection
+    # mask: only HIGH points above the cut
+    cloud_mask = hi_mask & (z_sig > z_cut)
+    cull_frac = float(cloud_mask.float().mean())
+    # 5) clamp how much we remove (raise cut within HIGH if needed)
+    if target_cull_frac is not None and cull_frac > target_cull_frac:
+        hi_frac = max(1e-8, frac_hi)
+        hi_target = 1.0 - (target_cull_frac / hi_frac)
+        new_cut = float(torch.quantile(z_sig[hi_mask], hi_target))
+        z_cut = max(z_cut, new_cut, car_top + car_margin_sig)
+        cloud_mask = hi_mask & (z_sig > z_cut)
+    return cloud_mask
 
 def visualize_mask_and_points(u_i, v_i, bool_mask):
     mask_np = bool_mask.cpu().numpy()

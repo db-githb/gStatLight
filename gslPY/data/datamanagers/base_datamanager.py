@@ -38,7 +38,7 @@ from typing_extensions import TypeVar
 from gslPY.cameras.cameras import Cameras
 from gslPY.data.datasets.base_dataset import InputDataset
 from gslPY.data.utils.nerfstudio_collate import nerfstudio_collate
-from gslPY.main.utils_rich import CONSOLE
+from gslUTILS.rich_utils import CONSOLE
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 

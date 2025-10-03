@@ -15,12 +15,17 @@
 
 from __future__ import annotations
 
+import math
+import sys
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Dict, Literal, Optional, Type, Any
+from typing import Dict, List, Literal, Optional, Type, Any
 from enum import Enum
 import numpy as np
 import torch
+from PIL import Image
+from rich.prompt import Confirm
 
 from gslPY.cameras import camera_utils
 from gslPY.cameras.cameras import CAMERA_MODEL_TO_TYPE, Cameras
@@ -32,7 +37,8 @@ from gslPY.data.utils.dataparsers_utils import (
     get_train_eval_split_fraction,
     get_train_eval_split_interval,
 )
-from gslPY.main.utils_rich import CONSOLE
+from gslUTILS.rich_utils import CONSOLE, status
+from gslUTILS.utils import compute_downscale_factor, downscale_paths
 MAX_AUTO_RESOLUTION = 1600
 
 class CameraModel(Enum):
@@ -282,7 +288,7 @@ class ColmapDataParserConfig(DataParserConfig):
     Interval uses every nth frame for eval (used by most academic papers, e.g. MipNerf360, GSplat).
     All uses all the images for any split.
     """
-    train_split_fraction: float = 0.9
+    train_split_fraction: float = 1.0
     """The fraction of images to use for training. The remaining images are for eval."""
     eval_interval: int = 8
     """The interval between frames to use for eval. Only used when eval_mode is eval-interval."""
@@ -630,3 +636,75 @@ class ColmapDataParser(DataParser):
             out["points3D_image_ids"] = torch.stack(points3D_image_ids, dim=0)
             out["points3D_points2D_xy"] = torch.stack(points3D_image_xy, dim=0)
         return out
+
+    def _downscale_images(
+        self,
+        paths,
+        get_fname,
+        downscale_factor: int,
+        downscale_rounding_mode: str = "floor",
+        nearest_neighbor: bool = False,
+    ):
+        def calculate_scaled_size(original_width, original_height, downscale_factor, mode="floor"):
+            if mode == "floor":
+                return math.floor(original_width / downscale_factor), math.floor(original_height / downscale_factor)
+            elif mode == "round":
+                return round(original_width / downscale_factor), round(original_height / downscale_factor)
+            elif mode == "ceil":
+                return math.ceil(original_width / downscale_factor), math.ceil(original_height / downscale_factor)
+            else:
+                raise ValueError("Invalid mode. Choose from 'floor', 'round', or 'ceil'.")
+
+        with status(msg="[bold yellow]Downscaling images...", spinner="growVertical"):
+            assert downscale_factor > 1
+            assert isinstance(downscale_factor, int)
+            filepath = next(iter(paths))
+            img = Image.open(filepath)
+            w, h = img.size
+            w_scaled, h_scaled = calculate_scaled_size(w, h, downscale_factor, downscale_rounding_mode)
+            # Using %05d ffmpeg commands appears to be unreliable (skips images).
+            for path in paths:
+                nn_flag = "" if not nearest_neighbor else ":flags=neighbor"
+                path_out = get_fname(path)
+                path_out.parent.mkdir(parents=True, exist_ok=True)
+                ffmpeg_cmd = [
+                    f'ffmpeg -y -noautorotate -i "{path}" ',
+                    f"-q:v 2 -vf scale={w_scaled}:{h_scaled}{nn_flag} ",
+                    f'"{path_out}"',
+                ]
+
+        CONSOLE.log("[bold green]:tada: Done downscaling images.")
+
+    def _setup_downscale_factor(
+        self, image_filenames: List[Path]
+    ):
+        """
+        Setup the downscale factor for the dataset. This is used to downscale the images and cameras.
+        """
+
+        def get_fname(parent: Path, filepath: Path) -> Path:
+            """Returns transformed file name when downscale factor is applied"""
+            rel_part = filepath.relative_to(parent)
+            base_part = parent.parent / (str(parent.name) + f"_{self._downscale_factor}")
+            return base_part / rel_part
+
+        parent_path = Path(self.config.data / "images").resolve(strict=False)
+        filepath = next(iter(image_filenames))
+
+        if self._downscale_factor is None:
+            self._downscale_factor = (
+                int(self.config.downscale_factor)
+                if self.config.downscale_factor is not None
+                else compute_downscale_factor(filepath)
+            )
+        self.config.downscale_factor = self._downscale_factor
+        
+        if self._downscale_factor > 1:
+            downscaled = [get_fname(parent_path, fp) for fp in image_filenames]
+
+            if any(not p.parent.exists() for p in downscaled):
+                CONSOLE.log(f"[bold yellow] Using downscale factor of [bold red] {self._downscale_factor}")
+                downscale_paths(image_filenames, self._downscale_factor)
+
+            image_filenames = downscaled
+        return image_filenames

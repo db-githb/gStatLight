@@ -29,7 +29,7 @@ from torch.nn import Parameter
 from gsplat.rendering import rasterization
 from gslPY.cameras.cameras import Cameras
 from gslPY.models.base_model import Model, ModelConfig
-from gslPY.main.utils_rich import CONSOLE
+from gslUTILS.rich_utils import CONSOLE
 
 def num_sh_bases(degree: int):
     if degree == 0:

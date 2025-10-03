@@ -42,7 +42,7 @@ from gslPY.data.datamanagers.base_datamanager import DataManager, DataManagerCon
 from gslPY.data.dataparsers.base_dataparser import DataparserOutputs
 from gslPY.data.dataparsers.colmap_dataparser import ColmapDataParserConfig
 from gslPY.data.datasets.base_dataset import InputDataset
-from gslPY.main.utils_rich import CONSOLE
+from gslUTILS.rich_utils import CONSOLE
 from pathlib import Path
 
 @dataclass

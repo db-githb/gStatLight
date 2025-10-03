@@ -133,11 +133,15 @@ class gStatLight(BaseStatLight):
             log_totals(CONSOLE, before, after)
             count += 1
 
-        # Phase 5 — write PLY
-        with step(CONSOLE, f"Phase {count} — clean up render directory and mask directory", emoji=":wastebasket:"):
+        # Phase 5 — Clean up
+        with step(CONSOLE, f"Phase {count} — Clean up render directory and mask directory", emoji=":wastebasket:"):
             if render_dir.exists():
                 shutil.rmtree(render_dir)
             if mask_dir.exists():
                 shutil.rmtree(mask_dir)
+            count+=1
 
-        
+        # Phase 6 - Write .ply
+        with step(CONSOLE, f"Phase {count} — Write to .ply file", emoji=":pencil:"):
+            filename = write_ply(self.model_path, pipeline.model)
+            print(f"PLY FILE: {filename}")

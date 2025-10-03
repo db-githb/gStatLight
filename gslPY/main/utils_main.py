@@ -304,8 +304,8 @@ def render_loop(model_path, config, pipeline):
 
 def run_mask_processing(label, t1, t2, invert, render_dir, config, pipeline):
     mp = MaskProcessor(Path(render_dir), label)
-    mp.run_mask_processing(t1, t2)
+    mask_dir = mp.run_mask_processing(t1, t2)
     mask = cull_loop(config, pipeline)          # True where it matches the mask
     sel  = ~mask if invert else mask            # invert==True ⇒ remove matches
     pipeline.model = modify_model(pipeline.model, sel)
-    return pipeline.model
+    return pipeline.model, mask_dir

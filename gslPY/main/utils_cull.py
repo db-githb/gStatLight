@@ -135,7 +135,7 @@ def get_cull_list(model, camera, bool_mask):
     height =int(camera.height.item())
     width = int(camera.width.item())
 
-    means3D =  model.means
+    means3D    =  model.means
     device     = means3D.device
     dtype      = means3D.dtype
 

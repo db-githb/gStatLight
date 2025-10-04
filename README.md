@@ -11,25 +11,20 @@ A command-line tool to **spotlight central objects** in 3D Gaussian Splatting (3
 
 ### 1. Create & activate the Conda environment
 ```bash
-conda create -n gsl python
-conda activate gsl
+conda create -n autoiso python=3.11.9
+conda activate autoiso
 ```
+
 ### 2. Install dependencies
-
 ```bash
-# Change directories to project root (gStatLight/):
-cd <project-dir: gStatLight>
-
-# Install SAM2, & CLIP
-# This will also install a CUDA-enabled version of PyTorch (based on pip defaults)
+conda install -y -c nvidia --strict-channel-priority   cuda-toolkit=11.8 cuda-nvcc=11.8
+pip install torch==2.6.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+pip install gsplat==0.1.11
 pip install -r requirements.txt
-
-# Install the gStatLight package and its CLI entrypoints:
 pip install .
 ```
 
 ### 3. Install SAM2 weights for semantic masks
-
 ```bash
 cd ..  # Return to project root
 mkdir -p models

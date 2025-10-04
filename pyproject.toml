@@ -34,4 +34,4 @@ dependencies = [
 gsl = "gslCLI.cli_main:main"
 
 [tool.setuptools.packages.find]
-include = ["gslCLI*", "gslMasks*", "gslPY*", "gslUtils*", ]
+include = ["gslCLI*", "gslMASK*", "gslPY*", "gslUTILS*", ]

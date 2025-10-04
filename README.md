@@ -11,8 +11,8 @@ A command-line tool to **spotlight central objects** in 3D Gaussian Splatting (3
 
 ### 1. Create & activate the Conda environment
 ```bash
-conda create -n autoiso python=3.11.9
-conda activate autoiso
+conda create -n gsl python=3.11.9
+conda activate gsl
 ```
 
 ### 2. Install dependencies

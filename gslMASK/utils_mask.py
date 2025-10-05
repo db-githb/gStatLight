@@ -15,7 +15,6 @@ def setup_mask(data_dir):
   model_id = "IDEA-Research/grounding-dino-base"
   processor = AutoProcessor.from_pretrained(model_id)
   dino = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to("cuda").eval()
-  print(data_dir)
   root = data_dir.parent.parent / "models"
   root.mkdir(parents=True, exist_ok=True)
   sam2_checkpoint = root / "sam2.1_hiera_large.pt"

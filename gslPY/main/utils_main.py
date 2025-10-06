@@ -275,9 +275,8 @@ def write_ply(model_path, model):
 def render_loop(model_path, config, pipeline):
         #df = config.datamanager.dataparser.downscale_factor 
         #pipeline.model.downscale_factor = df
-        script_dir = Path(__file__).resolve().parent.parent.parent
-        render_dir = model_path.parent.parts[1]
-        output_dir = script_dir / Path("renders") / f"{render_dir}"
+        render_root = config.datamanager.dataparser.data
+        output_dir = render_root / "renders"
         output_dir.mkdir(parents=True, exist_ok=True)
         idx = 1
         

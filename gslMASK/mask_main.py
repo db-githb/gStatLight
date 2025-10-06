@@ -23,11 +23,7 @@ class MaskProcessor:
     self.inspect = inspect
 
   def mask_loop(self, downscale_factor, image_paths, predictor, processor, dino, bt, tt):
-    root = self.data_dir.resolve().parents[1] / "data" / self.data_dir.name
-    if downscale_factor > 1:
-       save_dir = root / f"masks_{downscale_factor}"
-    else:
-      save_dir = root / "masks"
+    save_dir = self.data_dir.resolve().parent / "masks" 
     save_dir.mkdir(parents=True, exist_ok=True)
 
     for idx, img_path in tqdm(enumerate(image_paths), total=len(image_paths), desc="Producing Masks", colour='GREEN', disable=False):

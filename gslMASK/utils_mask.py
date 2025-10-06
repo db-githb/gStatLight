@@ -7,7 +7,7 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from pathlib import Path
 
-from gslUTILS.utils import get_downscale_dir
+from gslUTILS.model_loader import get_model_path
 
 def setup_mask(data_dir):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -17,7 +17,7 @@ def setup_mask(data_dir):
   dino = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to("cuda").eval()
   root = data_dir.parent.parent / "models"
   root.mkdir(parents=True, exist_ok=True)
-  sam2_checkpoint = root / "sam2.1_hiera_large.pt"
+  sam2_checkpoint = get_model_path()
   model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
   sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=device)
   predictor = SAM2ImagePredictor(sam2_model)

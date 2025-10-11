@@ -22,6 +22,26 @@ class MaskProcessor:
     self.prompt = prompt
     self.inspect = inspect
 
+  
+  def flood_fill(self, mask_u8: np.ndarray) -> np.ndarray:
+      im = (mask_u8 > 0).astype(np.uint8)        # ensure 0/1
+      # pad so (0,0) is guaranteed background
+      padded = np.pad(im, 1, mode="constant", constant_values=0)
+      h, w = padded.shape
+
+      # flood from the padded corner
+      flood = padded.copy()
+      mask = np.zeros((h+2, w+2), np.uint8)      # required size: (H+2, W+2)
+      cv2.floodFill(flood, mask, seedPoint=(0,0), newVal=1)
+
+      # remove padding
+      flood = flood[1:-1, 1:-1]
+
+      # pixels that stayed 0 after flood are interior holes → set to 1
+      filled = im.copy()
+      filled[(im == 0) & (flood == 0)] = 1
+      return filled.astype(np.uint8)
+
   def mask_loop(self, downscale_factor, image_paths, predictor, processor, dino, bt, tt):
     save_dir = self.data_dir.resolve().parent / "masks" 
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +64,10 @@ class MaskProcessor:
         alpha = (bool_mask.astype(np.uint8)) * 255
         rgba = np.dstack([image_rgb, alpha])
 
-        binary_mask = (inverted_mask.astype(np.uint8)) * 255
+        im = (inverted_mask == 0).astype(np.uint8)   # make 1=foreground
+        filled = self.flood_fill(im)
+        filled_mask = (filled == 1).astype(np.uint8)      # back to 0/1 like your input
+        binary_mask = (filled_mask) * 255
         stem = os.path.splitext(os.path.basename(img_path))[0]
         number = stem.split('_')[-1]
         mask_path = f'{save_dir}/mask_{number}.png'
